@@ -137,12 +137,14 @@ PYEOF
 
 install_server() {
     echo "[DL]  Installing/Updating Enshrouded server (App $APP_ID)..."
-    "$STEAMCMD" \
+    # stdbuf -oL forces line-buffered output so Docker logs update in real time.
+    # tr '\r' '\n' converts SteamCMD's carriage-return progress bars into newlines.
+    stdbuf -oL "$STEAMCMD" \
         +@sSteamCmdForcePlatformType windows \
         +force_install_dir "$SERVER_DIR" \
         +login anonymous \
         +app_update "$APP_ID" validate \
-        +quit
+        +quit 2>&1 | tr '\r' '\n'
     echo "[OK] Server installed/updated."
 }
 
