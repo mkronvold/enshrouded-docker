@@ -231,7 +231,7 @@ echo "2278520" > "$SERVER_DIR/steam_appid.txt"
 
 # List installed server files (useful for diagnosing missing binaries)
 echo "[INFO] Server directory contents:"
-ls -la "$SERVER_DIR/" 2>/dev/null | head -30
+ls -la "$SERVER_DIR/"
 
 # Check for a native Linux binary (in case Steam added Linux depot support)
 LINUX_EXE="$SERVER_DIR/enshrouded_server"
@@ -368,6 +368,13 @@ if [[ -f "$SERVER_DIR/steam_api64.dll" ]]; then
 else
     echo "[WARN] steam_api64.dll not present — validate should have provided it"
 fi
+
+# Point Wine's Steam registry at the server dir so steam_api64.dll can find
+# steamclient64.dll locally (depot ships it) without needing a running Steam client.
+WIN_SERVER_DIR=$(WINEDEBUG=-all "$WINE" winepath -w "$SERVER_DIR" 2>/dev/null || echo "C:\\enshrouded")
+echo "[WINE] Setting Steam registry path to: $WIN_SERVER_DIR"
+WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Valve\Steam' /v SteamPath /t REG_SZ /d "$WIN_SERVER_DIR" /f 2>/dev/null || true
+WINEDEBUG=-all "$WINE" reg add 'HKLM\Software\Valve\Steam' /v InstallPath /t REG_SZ /d "$WIN_SERVER_DIR" /f 2>/dev/null || true
 
 WINEDEBUG="-all" "$WINE" "$SERVER_EXE" &
 SERVER_PID=$!
