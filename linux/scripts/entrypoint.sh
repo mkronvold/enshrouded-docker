@@ -218,6 +218,80 @@ if [[ "$(get_env UPDATE_ON_START true)" == "true" || ! -f "$SERVER_EXE" ]]; then
     install_server
 fi
 
+# Page-align all PE DLLs in the server directory.
+# The Enshrouded depot ships DLLs with FileAlignment=0x200 and non-page-aligned
+# PointerToRawData values. Wine's new wow64 mmap path requires file offsets to be
+# multiples of 0x1000 — otherwise the DLL silently fails to load and all its
+# exports are stubbed out. We fix each DLL in-place (atomic rename from a temp file).
+echo "[PA] Checking depot DLLs for page-alignment (Wine mmap fix)..."
+python3 - <<'PYEOF'
+import struct, os, glob
+
+PAGE = 0x1000
+server_dir = os.environ['SERVER_DIR']
+
+def realign_if_needed(path):
+    try:
+        with open(path, 'rb') as f:
+            data = bytearray(f.read())
+        if len(data) < 0x40 or data[:2] != b'MZ':
+            return
+        pe_off = struct.unpack_from('<I', data, 0x3c)[0]
+        if pe_off + 28 > len(data) or data[pe_off:pe_off+4] != b'PE\x00\x00':
+            return
+        nsec   = struct.unpack_from('<H', data, pe_off + 6)[0]
+        opt_sz = struct.unpack_from('<H', data, pe_off + 20)[0]
+        shdrs_base = pe_off + 24 + opt_sz
+
+        sections = []
+        for i in range(nsec):
+            off = shdrs_base + i * 40
+            nm = data[off:off+8].decode('ascii', errors='replace').rstrip('\x00')
+            vs, va, rs, rp = struct.unpack_from('<IIII', data, off + 8)
+            sections.append({'nm': nm, 'vs': vs, 'va': va, 'rs': rs, 'rp': rp, 'off': off})
+
+        unaligned = [s for s in sections if s['rp'] > 0 and s['rp'] % PAGE != 0]
+        if not unaligned:
+            return  # already page-aligned, nothing to do
+
+        fname = os.path.basename(path)
+        headers_end = shdrs_base + nsec * 40
+        cur_pos = (headers_end + PAGE - 1) & ~(PAGE - 1)
+        for s in sections:
+            s['new_rp'] = cur_pos
+            s['new_rs'] = ((s['rs'] + PAGE - 1) & ~(PAGE - 1)) if s['rs'] > 0 else 0
+            cur_pos += s['new_rs']
+
+        new_data = bytearray(data[:headers_end])
+        new_data += b'\x00' * (sections[0]['new_rp'] - headers_end)
+        for s in sections:
+            if s['rs'] > 0:
+                raw = data[s['rp']:s['rp'] + s['rs']]
+                new_data += raw
+                new_data += b'\x00' * (s['new_rs'] - s['rs'])
+
+        for s in sections:
+            struct.pack_into('<I', new_data, s['off'] + 16, s['new_rs'])  # SizeOfRawData
+            struct.pack_into('<I', new_data, s['off'] + 20, s['new_rp'])  # PointerToRawData
+
+        # Patch FileAlignment (opt+36) and SizeOfHeaders (opt+60)
+        struct.pack_into('<I', new_data, pe_off + 24 + 36, PAGE)
+        struct.pack_into('<I', new_data, pe_off + 24 + 60, sections[0]['new_rp'])
+
+        tmp = path + '.__pa_tmp'
+        with open(tmp, 'wb') as f:
+            f.write(new_data)
+        os.chmod(tmp, os.stat(path).st_mode)
+        os.rename(tmp, path)
+        print(f"[PA] {fname}: {len(data)}B → {len(new_data)}B (realigned {len(unaligned)}/{nsec} sections)")
+
+    except Exception as e:
+        print(f"[PA] WARN: {os.path.basename(path)}: {e}")
+
+for dll_path in sorted(glob.glob(os.path.join(server_dir, '*.dll'))):
+    realign_if_needed(dll_path)
+PYEOF
+
 # Generate server config
 echo "[CFG]  Generating server config..."
 write_config
@@ -376,8 +450,7 @@ echo "[WINE] Setting Steam registry path to: $WIN_SERVER_DIR"
 WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Valve\Steam' /v SteamPath /t REG_SZ /d "$WIN_SERVER_DIR" /f 2>/dev/null || true
 WINEDEBUG=-all "$WINE" reg add 'HKLM\Software\Valve\Steam' /v InstallPath /t REG_SZ /d "$WIN_SERVER_DIR" /f 2>/dev/null || true
 
-WINEDEBUG="err+all,warn+dll,warn+module,warn+loaddll,fixme-all" "$WINE" "$SERVER_EXE" 2>&1 | \
-    grep -E '(err:|warn:|fixme:|Unhandled|crash|segfault|access|[Ss]team|module|dll)' | head -200 &
+WINEDEBUG="-all" "$WINE" "$SERVER_EXE" &
 SERVER_PID=$!
 echo "[OK] Server started (PID $SERVER_PID)"
 send_webhook "[UP] **$(get_env NAME 'Enshrouded Server')** is starting..."
