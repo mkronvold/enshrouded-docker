@@ -1,3 +1,7 @@
+networks:
+  enshrouded-docker_default:
+    name: enshrouded-docker_default
+
 services:
   enshrouded:
     image: enshrouded-docker:latest
@@ -12,40 +16,11 @@ services:
       - "15637:15637/udp"
       - "15637:15637/tcp"
     volumes:
-      - ../enshrouded-windows:C:\enshrouded
+      - ./enshrouded:C:\enshrouded
+    networks:
+      - enshrouded-docker_default
     deploy:
       resources:
         limits:
-          cpus: '4.0'
-          memory: '8g'
-
-  # Linux/Wine variant - run with: docker compose --profile linux up
-  enshrouded-linux:
-    profiles: ["linux"]
-    platform: linux/amd64
-    image: enshrouded-docker:linux
-    build:
-      context: ./linux
-      dockerfile: Dockerfile
-      platforms:
-        - linux/amd64
-    env_file:
-      - .env
-    environment:
-      - WINEESYNC=1
-    ports:
-      - "15636:15636/udp"
-      - "15636:15636/tcp"
-      - "15637:15637/udp"
-      - "15637:15637/tcp"
-    volumes:
-      - ../enshrouded-linux:/home/steam/enshrouded
-    ulimits:
-      nofile:
-        soft: 524288
-        hard: 524288
-    deploy:
-      resources:
-        limits:
-          cpus: '4.0'
+          cpus: '3.0'
           memory: '8g'

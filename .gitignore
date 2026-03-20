@@ -2,4 +2,17 @@
 .env
 
 # Server data volume (managed outside this repo)
-../enshrouded/
+enshrouded/
+
+# example
+vm-compose-reference.ps1
+
+# Ignore the .vscode directory if you have one for local development settings
+.vscode/
+
+# Ignore log files
+*.log
+
+# Ignore OS-specific files
+.DS_Store
+
